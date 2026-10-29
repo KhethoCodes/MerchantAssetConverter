@@ -33,22 +33,6 @@ function extFormat(file) {
 function isSupported(file) {
   return ['image/jpeg', 'image/png', 'image/webp'].includes(file.type);
 }
-function formatDate(iso) {
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-    });
-  } catch {
-    return iso;
-  }
-}
-// Cloudinary: inserting fl_attachment forces a real download instead of
-// opening the image in a new browser tab.
-function toDownloadUrl(url) {
-  if (!url) return url;
-  return url.replace('/upload/', '/upload/fl_attachment/');
-}
-
 export default function Portal() {
   // ---------- upload / source image state ----------
   const [file, setFile] = useState(null);
@@ -71,11 +55,17 @@ export default function Portal() {
   const [convertError, setConvertError] = useState('');
   const [job, setJob] = useState(null);
 
-  // ---------- history state ----------
-  const [history, setHistory] = useState([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!previewUrl) return;
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  useEffect(() => {
+    if (!job?.outputUrl) return;
+    return () => URL.revokeObjectURL(job.outputUrl);
+  }, [job]);
 
   const clampOffset = useCallback((off, z) => {
     const scale = baseScale * z;
@@ -88,23 +78,6 @@ export default function Portal() {
       y: Math.min(0, Math.max(minY, off.y)),
     };
   }, [baseScale, iw, ih]);
-
-  async function fetchHistory() {
-    setHistoryLoading(true);
-    try {
-      const res = await fetch('/api/jobs');
-      const data = await res.json();
-      if (res.ok) setHistory(data.jobs || []);
-    } catch (err) {
-      console.error('Failed to load history:', err);
-    } finally {
-      setHistoryLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    fetchHistory();
-  }, []);
 
   function resetPipeline() {
     setUploadError('');
@@ -230,11 +203,13 @@ export default function Portal() {
         method: 'POST',
         body: formData,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Processing failed.');
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Processing failed.');
+      }
 
-      setJob(data.job);
-      fetchHistory();
+      const outputUrl = URL.createObjectURL(await res.blob());
+      setJob({ outputUrl });
     } catch (err) {
       console.error(err);
       setConvertError(err.message || 'Something went wrong while processing your image. Please try another image.');
@@ -469,7 +444,7 @@ export default function Portal() {
                 </div>
 
                 <a
-                  href={job ? toDownloadUrl(job.output_storage_url) : undefined}
+                  href={job?.outputUrl}
                   className={
                     'block text-center w-full mt-3.5 text-[13.5px] font-semibold px-4 py-2.5 rounded-xl border-2 border-brand-400 text-brand-600 bg-white/70 transition active:translate-y-px ' +
                     (job ? 'hover:bg-brand-50' : 'opacity-30 pointer-events-none')
@@ -502,7 +477,7 @@ export default function Portal() {
                 <div className="glass-soft rounded-xl overflow-hidden">
                   <div className="text-[10.5px] font-semibold uppercase tracking-wider text-brand-700/40 px-3 pt-2.5">Final output</div>
                   <div className="aspect-[3/2] mx-3 mt-2.5 mb-3 rounded-lg overflow-hidden checkerboard border border-black/10 flex items-center justify-center text-brand-700/35 text-[11.5px] font-mono">
-                    {job ? <img src={job.output_storage_url} alt="Final output" className="w-full h-full object-cover" /> : '600 × 400'}
+                    {job ? <img src={job.outputUrl} alt="Final output" className="w-full h-full object-cover" /> : '600 × 400'}
                   </div>
                   <div className="flex justify-between px-3 pb-2.5 font-mono text-[11.5px] text-brand-700/45">
                     <span>600 × 400</span><span>PNG</span>
@@ -511,36 +486,6 @@ export default function Portal() {
               </div>
             </div>
 
-            {/* Recent activity */}
-            <div className="glass rounded-2xl shadow-2xl shadow-black/10 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-[15px] font-semibold text-brand-700">Recent activity</h2>
-                <span className="text-[12.5px] text-brand-700/45">{historyLoading ? 'Loading…' : `${history.length} shown`}</span>
-              </div>
-              {history.length === 0 && !historyLoading && (
-                <p className="text-[12.5px] text-brand-700/40">No conversions yet — they'll show up here for the whole team.</p>
-              )}
-              <div className="flex flex-col gap-2 max-h-[420px] overflow-y-auto pr-1">
-                {history.map((h) => (
-                  <div key={h.id} className="flex items-center gap-3 glass-soft rounded-lg p-2.5">
-                    <img
-                      src={h.output_storage_url}
-                      alt={h.original_filename}
-                      className="w-10 h-10 rounded-md object-cover checkerboard border border-black/10 flex-none"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[12.5px] font-medium text-brand-700 truncate">{h.original_filename}</div>
-                      <div className="text-[11px] text-brand-700/45">
-                        {h.users?.display_name || 'Public visitor'} · {formatDate(h.created_at)}
-                      </div>
-                    </div>
-                    <span className="text-[10px] font-semibold px-2 py-1 rounded-full bg-brand-100 text-brand-600 flex-none">
-                      {h.status}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         </div>
 
